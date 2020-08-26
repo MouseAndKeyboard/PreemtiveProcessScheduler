@@ -26,8 +26,34 @@
 //  ---------------------------------------------------------------------
 
 //  YOUR DATA STRUCTURES, VARIABLES, AND FUNCTIONS SHOULD BE ADDED HERE:
+enum action_t { Compute, Sleep, Exit, Fork, Wait, Pipe, Writepipe, Readpipe };
+
+struct pipe_transmission_t {
+  int descriptor;
+  int nbytes;
+};
+
+// Unions allow me to store different kinds of command data
+// It allows code to remain readable without becoming overcomplicated
+union command_data_t {
+  int microseconds;
+  int pid;
+  int descriptor;
+  struct pipe_transmission_t pipe_info;
+};
+
+struct command_t {
+  enum action_t action;
+  int pid;
+  union command_data_t data;
+};
 
 int timetaken = 0;
+struct command_t command_queue[MAX_PROCESSES * MAX_SYSCALLS_PER_PROCESS];
+
+// Uses the values in the command_queue to find and set
+// the timetaken global variable.
+void run_simulation() {}
 
 //  ---------------------------------------------------------------------
 
@@ -111,37 +137,46 @@ void parse_eventfile(char program[], char eventfile[]) {
     //  ENSURE THAT THIS LINE'S PID IS VALID
     int thisPID = check_PID(words[0], lc);
 
-    //  OTHER VALUES ON (SOME) LINES
-    int otherPID, nbytes, usecs, pipedesc;
+    struct command_t cmd;
+    cmd.pid = thisPID;
 
     //  IDENTIFY LINES RECORDING SYSTEM-CALLS AND THEIR OTHER VALUES
     //  THIS FUNCTION ONLY CHECKS INPUT;  YOU WILL NEED TO STORE THE VALUES
+    //
+    //  Storing values inside the command structure.
     if (nwords == 3 && strcmp(words[1], "compute") == 0) {
-      usecs = check_microseconds(words[2], lc);
+      cmd.action = Compute;
+      cmd.data.microseconds = check_microseconds(words[2], lc);
     } else if (nwords == 3 && strcmp(words[1], "sleep") == 0) {
-      usecs = check_microseconds(words[2], lc);
+      cmd.data.microseconds = check_microseconds(words[2], lc);
+      cmd.action = Sleep;
     } else if (nwords == 2 && strcmp(words[1], "exit") == 0) {
-      ;
+      cmd.action = Exit;
     } else if (nwords == 3 && strcmp(words[1], "fork") == 0) {
-      otherPID = check_PID(words[2], lc);
+      cmd.data.pid = check_PID(words[2], lc);
+      cmd.action = Fork;
     } else if (nwords == 3 && strcmp(words[1], "wait") == 0) {
-      otherPID = check_PID(words[2], lc);
+      cmd.data.pid = check_PID(words[2], lc);
+      cmd.action = Wait;
     } else if (nwords == 3 && strcmp(words[1], "pipe") == 0) {
-      pipedesc = check_descriptor(words[2], lc);
+      cmd.data.pid = check_descriptor(words[2], lc);
+      cmd.action = Pipe;
     } else if (nwords == 4 && strcmp(words[1], "writepipe") == 0) {
-      pipedesc = check_descriptor(words[2], lc);
-      nbytes = check_bytes(words[3], lc);
+      cmd.data.pipe_info.descriptor = check_descriptor(words[2], lc);
+      cmd.data.pipe_info.nbytes = check_bytes(words[3], lc);
+      cmd.action = Writepipe;
     } else if (nwords == 4 && strcmp(words[1], "readpipe") == 0) {
-      pipedesc = check_descriptor(words[2], lc);
-      nbytes = check_bytes(words[3], lc);
+      cmd.data.pipe_info.descriptor = check_descriptor(words[2], lc);
+      cmd.data.pipe_info.nbytes = check_bytes(words[3], lc);
+      cmd.action = Readpipe;
     }
-    //  UNRECOGNISED LINE
+    // UNRECOGNISED LINE
     else {
       printf("%s: line %i of '%s' is unrecognized\n", program, lc, eventfile);
       exit(EXIT_FAILURE);
     }
 
-    printf("%i %i %i %i %i", pipedesc, usecs, nbytes, otherPID, thisPID);
+    command_queue[lc] = cmd;
   }
   fclose(fp);
 
@@ -161,6 +196,7 @@ int main(int argc, char *argv[]) {
   }
 
   parse_eventfile(argv[0], argv[1]);
+  run_simulation();
 
   printf("timetaken %i\n", timetaken);
   return 0;
