@@ -4,8 +4,8 @@
 #include <unistd.h>
 
 /*  CITS2002 Project 1 2020
-    Name:                student-name
-    Student number(s):   student-number
+    Name:                Michael Nefiodovas
+    Student number(s):   22969312
  */
 
 //  MAXIMUM NUMBER OF PROCESSES OUR SYSTEM SUPPORTS (PID=1..20)
