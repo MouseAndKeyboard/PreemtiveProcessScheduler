@@ -1,0 +1,31 @@
+# Line length can be at most 99 characters
+# Each word may be at most 19 characters
+
+# PID
+# 0 < PID <= 20
+
+# microseconds
+# 0 < microseconds
+
+# descriptor
+# 0 <= descriptor < 10
+
+# nbytes
+# 0 < nbytes
+
+
+# possible commands:
+
+# pid compute microseconds
+# pid sleep microseconds
+# pid exit
+# pid fork pid
+# pid wait pid
+# pid pipe descriptor
+# pid writepipe descriptor nbytes
+# pid readpipe descriptor nbytes
+
+
+
+
+
