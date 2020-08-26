@@ -160,6 +160,8 @@ int main(int argc, char *argv[]) {
     exit(EXIT_FAILURE);
   }
 
+  parse_eventfile(argv[0], argv[1]);
+
   printf("timetaken %i\n", timetaken);
   return 0;
 }
