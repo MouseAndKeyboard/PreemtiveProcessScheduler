@@ -29,28 +29,6 @@
 
 int timetaken = 0;
 
-enum action_t { Compute, Sleep, Exit, Fork, Wait, Pipe, Writepipe, Readpipe };
-
-struct pipe_data_transfer_t {
-  int descriptor;
-  int nbytes;
-};
-
-union data_t {
-  int microseconds;
-  int pid;
-  int descriptor;
-  struct pipe_data_transfer_t pipe_data;
-};
-
-struct command_t {
-  int pid;
-  enum action_t action;
-  union data_t data;
-};
-
-void process_command(struct command_t *cmd) {}
-
 //  ---------------------------------------------------------------------
 
 //  FUNCTIONS TO VALIDATE FIELDS IN EACH eventfile - NO NEED TO MODIFY
@@ -96,7 +74,7 @@ int check_bytes(char word[], int lc) {
 
 //  parse_eventfile() READS AND VALIDATES THE FILE'S CONTENTS
 //  YOU NEED TO STORE ITS VALUES INTO YOUR OWN DATA-STRUCTURES AND VARIABLES
-struct command_t[] parse_eventfile(char program[], char eventfile[]) {
+void parse_eventfile(char program[], char eventfile[]) {
 #define LINELEN 100
 #define WORDLEN 20
 #define CHAR_COMMENT '#'
@@ -136,38 +114,26 @@ struct command_t[] parse_eventfile(char program[], char eventfile[]) {
     //  OTHER VALUES ON (SOME) LINES
     int otherPID, nbytes, usecs, pipedesc;
 
-    struct command_t *command;
-    command->pid = thisPID;
-
     //  IDENTIFY LINES RECORDING SYSTEM-CALLS AND THEIR OTHER VALUES
     //  THIS FUNCTION ONLY CHECKS INPUT;  YOU WILL NEED TO STORE THE VALUES
     if (nwords == 3 && strcmp(words[1], "compute") == 0) {
-      command->action = Compute;
       usecs = check_microseconds(words[2], lc);
-
     } else if (nwords == 3 && strcmp(words[1], "sleep") == 0) {
-      command->action = Sleep;
-      command->data.microseconds = check_microseconds(words[2], lc);
-
+      usecs = check_microseconds(words[2], lc);
     } else if (nwords == 2 && strcmp(words[1], "exit") == 0) {
-      command->action = Exit;
+      ;
     } else if (nwords == 3 && strcmp(words[1], "fork") == 0) {
-      command->action = Fork;
-      command->data.pid = check_PID(words[2], lc);
+      otherPID = check_PID(words[2], lc);
     } else if (nwords == 3 && strcmp(words[1], "wait") == 0) {
-      command->action = Wait;
       otherPID = check_PID(words[2], lc);
     } else if (nwords == 3 && strcmp(words[1], "pipe") == 0) {
-      command->action = Pipe;
-      command->data.descriptor = check_descriptor(words[2], lc);
+      pipedesc = check_descriptor(words[2], lc);
     } else if (nwords == 4 && strcmp(words[1], "writepipe") == 0) {
-      command->action = Writepipe;
-      command->data.pipe_data.descriptor = check_descriptor(words[2], lc);
-      command->data.pipe_data.nbytes = check_bytes(words[3], lc);
+      pipedesc = check_descriptor(words[2], lc);
+      nbytes = check_bytes(words[3], lc);
     } else if (nwords == 4 && strcmp(words[1], "readpipe") == 0) {
-      command->action = Readpipe;
-      command->data.pipe_data.descriptor = check_descriptor(words[2], lc);
-      command->data.pipe_data.nbytes = check_bytes(words[3], lc);
+      pipedesc = check_descriptor(words[2], lc);
+      nbytes = check_bytes(words[3], lc);
     }
     //  UNRECOGNISED LINE
     else {
@@ -175,7 +141,7 @@ struct command_t[] parse_eventfile(char program[], char eventfile[]) {
       exit(EXIT_FAILURE);
     }
 
-    process_command(command);
+    printf("%i %i %i %i %i", pipedesc, usecs, nbytes, otherPID, thisPID);
   }
   fclose(fp);
 
