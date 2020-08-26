@@ -46,7 +46,7 @@ int check_microseconds(char word[], int lc) {
   int usecs = atoi(word);
 
   if (usecs <= 0) {
-    printf("invalid PID '%s', line %i\n", word, lc);
+    printf("invalid microseconds '%s', line %i\n", word, lc);
     exit(EXIT_FAILURE);
   }
   return usecs;
@@ -154,6 +154,12 @@ void parse_eventfile(char program[], char eventfile[]) {
 
 //  CHECK THE COMMAND-LINE ARGUMENTS, CALL parse_eventfile(), RUN SIMULATION
 int main(int argc, char *argv[]) {
+
+  if (argc != 2) {
+    fprintf(stderr, "[!] %s expected 1 argument, got %i\n", argv[0], argc - 1);
+    exit(EXIT_FAILURE);
+  }
+
   printf("timetaken %i\n", timetaken);
   return 0;
 }
