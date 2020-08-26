@@ -53,7 +53,7 @@ struct command_t command_queue[MAX_PROCESSES * MAX_SYSCALLS_PER_PROCESS];
 
 // Uses the values in the command_queue to find and set
 // the timetaken global variable.
-void run_simulation() {}
+void run_simulation(int time_quantum) {}
 
 //  ---------------------------------------------------------------------
 
@@ -190,13 +190,31 @@ void parse_eventfile(char program[], char eventfile[]) {
 //  CHECK THE COMMAND-LINE ARGUMENTS, CALL parse_eventfile(), RUN SIMULATION
 int main(int argc, char *argv[]) {
 
-  if (argc != 2) {
-    fprintf(stderr, "[!] %s expected 1 argument, got %i\n", argv[0], argc - 1);
+  if (argc != 4) {
+    fprintf(stderr, "[!] %s expected 3 arguments, got %i\n", argv[0], argc - 1);
     exit(EXIT_FAILURE);
   }
 
+  int quant = atoi(argv[2]);
+  // Checking if time quantum is valid
+  if (quant < 1) {
+    fprintf(stderr, "[!] %s time quantum must be > 0, got: %i\n", argv[0],
+            quant);
+    exit(EXIT_FAILURE);
+  }
+
+  int pipe_buff_size = atoi(argv[3]);
+  // Checking that the buffer size is valid
+  if (pipe_buff_size < 1) {
+    fprintf(stderr, "[!] %s pipe buffer size must be > 0, got %i\n", argv[0],
+            pipe_buff_size);
+    exit(EXIT_FAILURE);
+  } else {
+    fprintf(stderr, "[#] need to check valid range of buffer size\n");
+  }
+
   parse_eventfile(argv[0], argv[1]);
-  run_simulation();
+  run_simulation(quant);
 
   printf("timetaken %i\n", timetaken);
   return 0;
