@@ -53,7 +53,7 @@ struct command_t command_queue[MAX_PROCESSES * MAX_SYSCALLS_PER_PROCESS];
 
 // Uses the values in the command_queue to find and set
 // the timetaken global variable.
-void run_simulation(int time_quantum) {}
+void run_simulation(int time_quantum, int pipe_buff_size) {}
 
 //  ---------------------------------------------------------------------
 
@@ -214,7 +214,7 @@ int main(int argc, char *argv[]) {
   }
 
   parse_eventfile(argv[0], argv[1]);
-  run_simulation(quant);
+  run_simulation(quant, pipe_buff_size);
 
   printf("timetaken %i\n", timetaken);
   return 0;
