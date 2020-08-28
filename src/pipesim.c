@@ -27,7 +27,18 @@
 //  ---------------------------------------------------------------------
 
 //  YOUR DATA STRUCTURES, VARIABLES, AND FUNCTIONS SHOULD BE ADDED HERE:
-enum action_t { Compute, Sleep, Exit, Fork, Wait, Pipe, Writepipe, Readpipe };
+enum syscall_t {
+  SYS_COMPUTE,
+  SYS_SLEEP,
+  SYS_EXIT,
+  SYS_FORK,
+  SYS_WAIT,
+  SYS_PIPE,
+  SYS_WRITEPIPE,
+  SYS_READPIPE,
+
+  SYS_UNASSIGNED // Placeholder value for easier debugging
+};
 
 struct pipe_transmission_t {
   int descriptor;
@@ -43,31 +54,71 @@ union command_data_t {
   struct pipe_transmission_t pipe_info;
 };
 
-struct command_t {
-  enum action_t action;
-  int pid;
-  union command_data_t data;
-};
+enum process_state_t { ST_READY, ST_RUNNING, ST_WAITING, ST_UNASSIGNED };
 
 int timetaken = 0;
-int num_commands = 0;
-struct command_t command_queue[MAX_PROCESSES * MAX_SYSCALLS_PER_PROCESS];
+struct {
+  enum process_state_t state;
+  int next_instruction;
+
+  struct {
+    enum syscall_t syscall;
+    union command_data_t data;
+  } instruction_queue[MAX_SYSCALLS_PER_PROCESS];
+
+} process_list[MAX_PROCESSES];
+
+void clear_process(int pid) {
+  process_list[pid].next_instruction = 0;
+
+  // Initialise all instructions to default value
+  for (int call = 0; call < MAX_SYSCALLS_PER_PROCESS; call++) {
+    process_list[pid].instruction_queue[call].syscall = SYS_UNASSIGNED;
+  }
+}
+
+void initialise_process_list() {
+  for (int pid = 0; pid < MAX_PROCESSES; pid++) {
+    clear_process(pid);
+  }
+}
+
+void state_transition(int pid, enum process_state_t new_state) {
+  process_list[pid].state = new_state;
+  timetaken += USECS_PER_BYTE_TRANSFERED;
+}
+
+void sim_exit(int pid) {
+  clear_process(pid);
+  state_transition(pid, ST_UNASSIGNED);
+}
 
 // Uses the values in the command_queue to find and set
 // the timetaken global variable.
 void run_simulation(int time_quantum, int pipe_buff_size) {
 
-  for (int cmd = 0; cmd < num_commands; cmd++) {
-    switch (command_queue[cmd].action) {
-    case Exit: {
-      timetaken += USECS_TO_CHANGE_PROCESS_STATE;
+  int running = 0; // PID=1 ( index starts at 0 ) always first process
+  process_list[running].state = ST_RUNNING;
+
+  do {
+    int syscall_idex = process_list[running].next_instruction;
+    switch (process_list[running].instruction_queue[syscall_idex].syscall) {
+    case SYS_EXIT: {
+      sim_exit(running);
+      // must find new process to run
       break;
     }
     default: {
       break;
     }
     }
-  }
+
+    for (int pid = 0; pid < MAX_PROCESSES; pid++) {
+      if (process_list[pid].state == ST_READY) {
+      }
+    }
+
+  } while (true); // until simulation is complete
 }
 
 //  ---------------------------------------------------------------------
@@ -133,8 +184,8 @@ void parse_eventfile(char program[], char eventfile[]) {
 
   //  READ EACH LINE FROM THE EVENTFILE, UNTIL WE REACH THE END-OF-FILE
   while (fgets(line, sizeof line, fp) != NULL) {
-
-    //  COMMENT LINES ARE SIMPLY SKIPPED
+    ++lc;
+    //    COMMENT LINES ARE SIMPLY SKIPPED
     if (line[0] == CHAR_COMMENT) {
       continue;
     }
@@ -151,52 +202,93 @@ void parse_eventfile(char program[], char eventfile[]) {
     //  ENSURE THAT THIS LINE'S PID IS VALID
     int thisPID = check_PID(words[0], lc);
 
-    struct command_t cmd;
-    cmd.pid = thisPID;
-
     //  IDENTIFY LINES RECORDING SYSTEM-CALLS AND THEIR OTHER VALUES
     //  THIS FUNCTION ONLY CHECKS INPUT;  YOU WILL NEED TO STORE THE VALUES
     //
     //  Storing values inside the command structure.
+
+    int pid_index = thisPID - 1;
+    int next_instruction = process_list[pid_index].next_instruction;
+
     if (nwords == 3 && strcmp(words[1], "compute") == 0) {
-      cmd.action = Compute;
-      cmd.data.microseconds = check_microseconds(words[2], lc);
+
+      process_list[pid_index].instruction_queue[next_instruction].syscall =
+          SYS_COMPUTE;
+
+      process_list[pid_index]
+          .instruction_queue[next_instruction]
+          .data.microseconds = check_microseconds(words[2], lc);
+
     } else if (nwords == 3 && strcmp(words[1], "sleep") == 0) {
-      cmd.data.microseconds = check_microseconds(words[2], lc);
-      cmd.action = Sleep;
+
+      process_list[pid_index].instruction_queue[next_instruction].syscall =
+          SYS_SLEEP;
+
+      process_list[pid_index]
+          .instruction_queue[next_instruction]
+          .data.microseconds = check_microseconds(words[2], lc);
+
     } else if (nwords == 2 && strcmp(words[1], "exit") == 0) {
-      cmd.action = Exit;
+
+      process_list[pid_index].instruction_queue[next_instruction].syscall =
+          SYS_EXIT;
+
     } else if (nwords == 3 && strcmp(words[1], "fork") == 0) {
-      cmd.data.pid = check_PID(words[2], lc);
-      cmd.action = Fork;
+
+      process_list[pid_index].instruction_queue[next_instruction].syscall =
+          SYS_FORK;
+
+      process_list[pid_index].instruction_queue[next_instruction].data.pid =
+          check_PID(words[2], lc);
+
     } else if (nwords == 3 && strcmp(words[1], "wait") == 0) {
-      cmd.data.pid = check_PID(words[2], lc);
-      cmd.action = Wait;
+      process_list[pid_index].instruction_queue[next_instruction].syscall =
+          SYS_WAIT;
+
+      process_list[pid_index].instruction_queue[next_instruction].data.pid =
+          check_PID(words[2], lc);
     } else if (nwords == 3 && strcmp(words[1], "pipe") == 0) {
-      cmd.data.pid = check_descriptor(words[2], lc);
-      cmd.action = Pipe;
+      process_list[pid_index].instruction_queue[next_instruction].syscall =
+          SYS_PIPE;
+
+      process_list[pid_index]
+          .instruction_queue[next_instruction]
+          .data.descriptor = check_descriptor(words[2], lc);
+
     } else if (nwords == 4 && strcmp(words[1], "writepipe") == 0) {
-      cmd.data.pipe_info.descriptor = check_descriptor(words[2], lc);
-      cmd.data.pipe_info.nbytes = check_bytes(words[3], lc);
-      cmd.action = Writepipe;
+      process_list[pid_index].instruction_queue[next_instruction].syscall =
+          SYS_WRITEPIPE;
+
+      process_list[pid_index]
+          .instruction_queue[next_instruction]
+          .data.pipe_info.descriptor = check_descriptor(words[2], lc);
+
+      process_list[pid_index]
+          .instruction_queue[next_instruction]
+          .data.pipe_info.nbytes = check_bytes(words[3], lc);
+
     } else if (nwords == 4 && strcmp(words[1], "readpipe") == 0) {
-      cmd.data.pipe_info.descriptor = check_descriptor(words[2], lc);
-      cmd.data.pipe_info.nbytes = check_bytes(words[3], lc);
-      cmd.action = Readpipe;
+
+      process_list[pid_index].instruction_queue[next_instruction].syscall =
+          SYS_READPIPE;
+
+      process_list[pid_index]
+          .instruction_queue[next_instruction]
+          .data.pipe_info.descriptor = check_descriptor(words[2], lc);
+
+      process_list[pid_index]
+          .instruction_queue[next_instruction]
+          .data.pipe_info.nbytes = check_bytes(words[3], lc);
     }
     // UNRECOGNISED LINE
     else {
       printf("%s: line %i of '%s' is unrecognized\n", program, lc, eventfile);
       exit(EXIT_FAILURE);
     }
-
-    command_queue[lc] = cmd;
-
-    // Line counts from zero
-    ++lc;
+    ++process_list[pid_index]
+          .next_instruction; // Make sure to always assign to a new location
   }
   fclose(fp);
-  num_commands = lc;
 
 #undef LINELEN
 #undef WORDLEN
@@ -231,6 +323,8 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "[#] need to check valid range of buffer size\n");
   }
 
+  initialise_process_list(); // initialising process list separately from
+                             // parsing. Each function should be self-contained
   parse_eventfile(argv[0], argv[1]);
   run_simulation(quant, pipe_buff_size);
 
