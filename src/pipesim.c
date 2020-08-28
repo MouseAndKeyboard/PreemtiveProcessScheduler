@@ -49,11 +49,25 @@ struct command_t {
 };
 
 int timetaken = 0;
+int num_commands = 0;
 struct command_t command_queue[MAX_PROCESSES * MAX_SYSCALLS_PER_PROCESS];
 
 // Uses the values in the command_queue to find and set
 // the timetaken global variable.
-void run_simulation(int time_quantum, int pipe_buff_size) {}
+void run_simulation(int time_quantum, int pipe_buff_size) {
+
+  for (int cmd = 0; cmd < num_commands; cmd++) {
+    switch (command_queue[cmd].action) {
+    case Exit: {
+      timetaken += USECS_TO_CHANGE_PROCESS_STATE;
+      break;
+    }
+    default: {
+      break;
+    }
+    }
+  }
+}
 
 //  ---------------------------------------------------------------------
 
@@ -118,7 +132,6 @@ void parse_eventfile(char program[], char eventfile[]) {
 
   //  READ EACH LINE FROM THE EVENTFILE, UNTIL WE REACH THE END-OF-FILE
   while (fgets(line, sizeof line, fp) != NULL) {
-    ++lc;
 
     //  COMMENT LINES ARE SIMPLY SKIPPED
     if (line[0] == CHAR_COMMENT) {
@@ -177,8 +190,12 @@ void parse_eventfile(char program[], char eventfile[]) {
     }
 
     command_queue[lc] = cmd;
+
+    // Line counts from zero
+    ++lc;
   }
   fclose(fp);
+  num_commands = lc;
 
 #undef LINELEN
 #undef WORDLEN
