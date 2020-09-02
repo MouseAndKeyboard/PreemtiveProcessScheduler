@@ -27,7 +27,7 @@
 //  ---------------------------------------------------------------------
 
 //  YOUR DATA STRUCTURES, VARIABLES, AND FUNCTIONS SHOULD BE ADDED HERE:
-enum syscall_t {
+enum syscall_type {
   SYS_COMPUTE,
   SYS_SLEEP,
   SYS_EXIT,
@@ -62,9 +62,13 @@ struct {
   int next_syscall;
 
   struct {
-    enum syscall_t syscall;
+    enum syscall_type syscall;
     union syscall_data_t data;
   } syscall_queue[MAX_SYSCALLS_PER_PROCESS];
+
+  // technically it should only ever be able to
+  // have MAX_PROCESSES - 1 children.
+  int children_pids[MAX_PROCESSES];
 
 } process_list[MAX_PROCESSES];
 
