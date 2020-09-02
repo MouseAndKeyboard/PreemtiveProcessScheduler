@@ -47,23 +47,23 @@ struct pipe_transmission {
 
 // Unions allow me to store different kinds of command data
 // It allows code to remain readable without becoming overcomplicated
-union syscall_data_t {
+union syscall_data {
   int microseconds;
   int pid;
   int descriptor;
   struct pipe_transmission pipe_info;
 };
 
-enum process_state_t { ST_READY, ST_RUNNING, ST_WAITING, ST_UNASSIGNED };
+enum process_state_type { ST_READY, ST_RUNNING, ST_WAITING, ST_UNASSIGNED };
 
 int timetaken = 0;
 struct {
-  enum process_state_t state;
+  enum process_state_type state;
   int next_syscall;
 
   struct {
     enum syscall_type syscall;
-    union syscall_data_t data;
+    union syscall_data data;
   } syscall_queue[MAX_SYSCALLS_PER_PROCESS];
 
   // technically it should only ever be able to
@@ -98,7 +98,7 @@ int rdy_queue[MAX_PROCESSES];
 
 #define STATE_NAME_LEN 15
 
-void state_transition(int pid, enum process_state_t new_state) {
+void state_transition(int pid, enum process_state_type new_state) {
   process_list[pid].state = new_state;
 
   char state[STATE_NAME_LEN];
