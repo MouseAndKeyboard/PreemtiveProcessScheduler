@@ -40,7 +40,7 @@ enum syscall_type {
   SYS_UNASSIGNED // Placeholder value for easier debugging
 };
 
-struct pipe_transmission_t {
+struct pipe_transmission {
   int descriptor;
   int nbytes;
 };
@@ -51,7 +51,7 @@ union syscall_data_t {
   int microseconds;
   int pid;
   int descriptor;
-  struct pipe_transmission_t pipe_info;
+  struct pipe_transmission pipe_info;
 };
 
 enum process_state_t { ST_READY, ST_RUNNING, ST_WAITING, ST_UNASSIGNED };
