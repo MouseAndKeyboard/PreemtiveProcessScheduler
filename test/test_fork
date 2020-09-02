@@ -3,4 +3,4 @@
 2	exit
 #
 # with:		./pipesim  thisfile  1000  2000
-#		timetaken 35
+#		timetaken 30
