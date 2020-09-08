@@ -54,52 +54,119 @@ union syscall_data {
   struct pipe_transmission pipe_info;
 };
 
-enum process_state_type { ST_READY, ST_RUNNING, ST_WAITING, ST_UNASSIGNED };
+enum process_state_type {
+  ST_READY,
+  ST_RUNNING,
+  ST_SLEEPING,
+  ST_WAITING,
+  ST_UNASSIGNED
+};
 
 int timetaken = 0;
 struct {
   enum process_state_type state;
   int next_syscall;
 
-  struct {
+  struct syscall {
     enum syscall_type syscall;
     union syscall_data data;
   } syscall_queue[MAX_SYSCALLS_PER_PROCESS];
 
-  // technically it should only ever be able to
-  // have MAX_PROCESSES - 1 children.
-  int children_pids[MAX_PROCESSES];
+  int parent_pid;
+  int waiting_for[]
 
 } process_list[MAX_PROCESSES];
 
+#define INVALID_PARENT -1
+
 void clear_process(int pid) {
   process_list[pid].next_syscall = 0;
+
+  process_list[pid].state = ST_UNASSIGNED;
 
   // Initialise all syscalls to default value
   for (int call = 0; call < MAX_SYSCALLS_PER_PROCESS; call++) {
     process_list[pid].syscall_queue[call].syscall = SYS_UNASSIGNED;
   }
+
+  process_list[pid].parent_pid = INVALID_PARENT;
 }
 
-void initialise_process_list() {
+void initialise_process_list(void) {
   for (int pid = 0; pid < MAX_PROCESSES; pid++) {
     clear_process(pid);
   }
 }
 
-// Helper functions for the ready queue
-bool queue_empty(int head, int tail) { return head == tail; }
-int dequeue(int *queue, int *head) { return queue[(*head)++]; }
-void enqueue(int *queue, int *tail, int value) { queue[(*tail)++] = value; }
+struct queue {
+  int head;
+  int tail;
+  int elements[MAX_PROCESSES];
+};
 
-int rdy_head = 0;
-int rdy_tail = 0;
-int rdy_queue[MAX_PROCESSES];
+// Helper functions for the queue
+void queue_init(struct queue *q) {
+  for (int i = 0; i < MAX_PROCESSES; i++) {
+    q->elements[i] = 0;
+  }
+  q->head = 0;
+  q->tail = 0;
+}
+bool queue_empty(struct queue *q) { return q->head == q->tail; }
+int dequeue(struct queue *q) { return q->elements[(q->head)++]; }
+void enqueue(struct queue *q, int value) { q->elements[(q->tail)++] = value; }
+
+void state_transition(int pid, enum process_state_type new_state,
+                      struct queue *rdy_queue);
+
+/*
+ * elapse_time
+ * Simulates the passage of time.
+ *
+ * time_delta: Amount of time which has passed
+ * rdy_queue: Ready queue structure to enable state transitions
+ *
+ * Returns:
+ * True - A state transition occurred
+ * False - No state change occurred
+ */
+bool elapse_time(int time_delta, struct queue *rdy_queue) {
+
+  timetaken += time_delta;
+  printf("[#] T: %i\n", timetaken);
+  bool state_change = false;
+  for (int proc = 0; proc < MAX_PROCESSES; proc++) {
+    if (ST_SLEEPING == process_list[proc].state) {
+      int current_call = process_list[proc].next_syscall;
+      int remaining_usecs =
+          process_list[proc].syscall_queue[current_call].data.microseconds;
+      remaining_usecs -= time_delta;
+      process_list[proc].syscall_queue[current_call].data.microseconds =
+          remaining_usecs;
+
+      // Sleeping time finished
+      if (remaining_usecs <= 0) {
+        ++process_list[proc].next_syscall;
+        state_transition(proc, ST_READY, rdy_queue);
+        state_change = true;
+      }
+    }
+  }
+  return state_change;
+}
 
 #define STATE_NAME_LEN 15
 
-void state_transition(int pid, enum process_state_type new_state) {
-  process_list[pid].state = new_state;
+/*
+ *  state_transition
+ *  Changes the state of a particular process
+ *
+ *  pid: Process ID of the process which we're changing the state of
+ *  new_state: Target state (what state we want pid to be in)
+ *  rdy_queue: Ready queue for putting ready processes #include
+ */
+void state_transition(int pid, enum process_state_type new_state,
+                      struct queue *rdy_queue) {
 
   char state[STATE_NAME_LEN];
   switch (new_state) {
@@ -109,6 +176,10 @@ void state_transition(int pid, enum process_state_type new_state) {
   }
   case ST_RUNNING: {
     snprintf(state, sizeof(state), "RUNNING");
+    break;
+  }
+  case ST_SLEEPING: {
+    snprintf(state, sizeof(state), "SLEEPING");
     break;
   }
   case ST_WAITING: {
@@ -126,39 +197,64 @@ void state_transition(int pid, enum process_state_type new_state) {
   }
 
   printf("[#] Changing process_%i's state -> %s\n", pid, state);
+
+  process_list[pid].state = ST_UNASSIGNED;
+
+  elapse_time(USECS_TO_CHANGE_PROCESS_STATE, rdy_queue);
+
+  // Actually do the allocation
+  process_list[pid].state = new_state;
+
   if (ST_READY == new_state) {
     // make sure to add processes which are ready to the "ready" queue
-    enqueue(rdy_queue, &rdy_tail, pid);
+    enqueue(rdy_queue, pid);
+  }
+}
+
+/*
+ * sim_exit
+ * simulates the exit() syscall on a process
+ *
+ * pid: Process ID we're going to exit.
+ * rdy_queue: Ready queue to allow for a state transition
+ */
+void sim_exit(int pid, struct queue *rdy_queue) {
+  // need to check if the parent of this process
+  // is waiting
+  int parent_pid = process_list[pid].parent_pid;
+  if (INVALID_PARENT != parent_pid) {
+    if (ST_WAITING == process_list[parent_pid].state) {
+      // need to check if parent is waiting for this particular child:
+      if (process_list[parent_pid])
+
+        state_transition(parent_pid, ST_READY, rdy_queue);
+    }
   }
 
-  timetaken += USECS_TO_CHANGE_PROCESS_STATE;
-}
-
-void sim_exit(int pid) {
   clear_process(pid);
-  state_transition(pid, ST_UNASSIGNED);
+  state_transition(pid, ST_UNASSIGNED, rdy_queue);
 }
 
-void sim_compute(int pid, int time_quantum) {
+void sim_compute(int pid, int time_quantum, struct queue *rdy_queue) {
   int syscall_index = process_list[pid].next_syscall;
 
   int usecs = process_list[pid].syscall_queue[syscall_index].data.microseconds;
 
   if (usecs > time_quantum) {
-    timetaken += time_quantum;
+    elapse_time(time_quantum, rdy_queue);
     usecs -= time_quantum;
   } else {
-    timetaken += usecs;
+    elapse_time(usecs, rdy_queue);
     // We have finished computing
     usecs = 0;
     ++process_list[pid].next_syscall;
   }
 
   process_list[pid].syscall_queue[syscall_index].data.microseconds = usecs;
-  state_transition(pid, ST_READY);
+  state_transition(pid, ST_READY, rdy_queue);
 }
 
-void sim_fork(int parent_pid) {
+void sim_fork(int parent_pid, struct queue *rdy_queue) {
   int syscall_index = process_list[parent_pid].next_syscall;
   // subtract 1 to get the process index from 0 (rather than from 1)
   int child_pid =
@@ -168,66 +264,113 @@ void sim_fork(int parent_pid) {
   // state of the parent, but since there's no
   // state for these processes.
 
+  process_list[child_pid].parent_pid = parent_pid;
+
   ++process_list[parent_pid].next_syscall;
 
-  state_transition(child_pid, ST_READY);
-  state_transition(parent_pid, ST_READY);
+  state_transition(child_pid, ST_READY, rdy_queue);
+  state_transition(parent_pid, ST_READY, rdy_queue);
 }
+
+void sim_sleep(int pid, struct queue *rdy_queue) {
+  state_transition(pid, ST_SLEEPING, rdy_queue);
+}
+
+void sim_wait(int pid, int child_pid, struct queue *rdy_queue) {
+  process_list[pid].
+}
+
+#define NO_RUNNING -1
 
 // Uses the values in the command_queue to find and set
 // the timetaken global variable.
 void run_simulation(int time_quantum, int pipe_buff_size) {
 
   int running = 0; // PID=1 ( index starts at 0 ) always first process
-  bool done = false;
+  int count = 1;
+  struct queue rdy_queue;
+  queue_init(&rdy_queue);
 
   process_list[running].state = ST_RUNNING;
   do {
+    if (NO_RUNNING != running) {
+      // Get the system call of the currently executing process
+      int syscall_index = process_list[running].next_syscall;
 
-    // Get the system call of the currently executing process
-    int syscall_index = process_list[running].next_syscall;
+      printf("[%iusecs] [syscall %i] \t process_%i::", timetaken, syscall_index,
+             running);
 
-    printf("[%iusecs] [syscall %i] \t process_%i::", timetaken, syscall_index,
-           running);
+      // Decide how to process the particular system call
+      switch (process_list[running].syscall_queue[syscall_index].syscall) {
+      case SYS_EXIT: {
+        printf("exit();\n");
+        sim_exit(running, &rdy_queue);
+        --count;
+        break;
+      }
+      case SYS_COMPUTE: {
+        printf("compute();\n");
+        sim_compute(running, time_quantum, &rdy_queue);
+        break;
+      }
+      case SYS_FORK: {
+        printf("fork();\n");
+        sim_fork(running, &rdy_queue);
+        ++count;
+        break;
+      }
+      case SYS_SLEEP: {
+        printf("sleep();\n");
+        sim_sleep(running, &rdy_queue);
+        break;
+      }
+      case SYS_WAIT: {
+        printf("wait();\n");
+        sim_wait(running, &rdy_queue);
+      }
+      case SYS_UNASSIGNED: {
+        fprintf(stderr, "[!] UNASSIGNED SYSTEM CALL process_%i (halting...)\n",
+                running);
+        exit(EXIT_FAILURE);
+        break;
+      }
+      default: {
+        fprintf(stderr,
+                "[!] UNKNOWN SYSTEM CALL process_%i \"%i\" (halting...)\n",
+                running,
+                process_list[running].syscall_queue[syscall_index].syscall);
+        exit(EXIT_FAILURE);
+        break;
+      }
+      }
+    }
 
-    // Decide how to process the particular system call
-    switch (process_list[running].syscall_queue[syscall_index].syscall) {
-    case SYS_EXIT: {
-      printf("exit();\n");
-      sim_exit(running);
-      done = true;
-      break;
+    // if there are processes in the queue,
+    // we need to select the next one to compute.
+    if (!queue_empty(&rdy_queue)) {
+      running = dequeue(&rdy_queue);
+      state_transition(running, ST_RUNNING, &rdy_queue);
+    } else {
+      // Ready queue is empty, we should check
+      // if all processes have been terminated
+      for (int proc = 0; proc < MAX_PROCESSES; proc++) {
+        if (ST_UNASSIGNED != process_list[proc].state) {
+          if (elapse_time(1, &rdy_queue)) {
+            running = dequeue(&rdy_queue);
+            state_transition(running, ST_RUNNING, &rdy_queue);
+          } else {
+            running = NO_RUNNING;
+          }
+          break;
+        }
+      }
     }
-    case SYS_COMPUTE: {
-      printf("compute();\n");
-      sim_compute(running, time_quantum);
-      break;
-    }
-    case SYS_FORK: {
-      printf("fork();\n");
-      sim_fork(running);
-      break;
-    }
-    default: {
-      break;
-    }
-    }
-
-    // if there are still processes running, we need to select the next
-    // one to compute.
-    if (!queue_empty(rdy_head, rdy_tail)) {
-      // select the process at the front of the queue
-      running = dequeue(rdy_queue, &rdy_head);
-      state_transition(running, ST_RUNNING);
-      done = false;
-    }
-
-  } while (!done); // until simulation is complete
+  } while (count); // until simulation is complete
 }
 
 //  ---------------------------------------------------------------------
 
-//  FUNCTIONS TO VALIDATE FIELDS IN EACH eventfile - NO NEED TO MODIFY
+//    FUNCTIONS TO VALIDATE FIELDS IN EACH eventfile - NO NEED TO MODIFY
 int check_PID(char word[], int lc) {
   int PID = atoi(word);
 
@@ -313,67 +456,41 @@ void parse_eventfile(char program[], char eventfile[]) {
 
     int pid_index = thisPID - 1;
     int next_syscall = process_list[pid_index].next_syscall;
+    struct syscall *syscall =
+        &process_list[pid_index].syscall_queue[next_syscall];
 
     if (nwords == 3 && strcmp(words[1], "compute") == 0) {
-
-      process_list[pid_index].syscall_queue[next_syscall].syscall = SYS_COMPUTE;
-
-      process_list[pid_index].syscall_queue[next_syscall].data.microseconds =
-          check_microseconds(words[2], lc);
+      syscall->syscall = SYS_COMPUTE;
+      syscall->data.microseconds = check_microseconds(words[2], lc);
 
     } else if (nwords == 3 && strcmp(words[1], "sleep") == 0) {
-
-      process_list[pid_index].syscall_queue[next_syscall].syscall = SYS_SLEEP;
-
-      process_list[pid_index].syscall_queue[next_syscall].data.microseconds =
-          check_microseconds(words[2], lc);
+      syscall->syscall = SYS_SLEEP;
+      syscall->data.microseconds = check_microseconds(words[2], lc);
 
     } else if (nwords == 2 && strcmp(words[1], "exit") == 0) {
-
-      process_list[pid_index].syscall_queue[next_syscall].syscall = SYS_EXIT;
+      syscall->syscall = SYS_EXIT;
 
     } else if (nwords == 3 && strcmp(words[1], "fork") == 0) {
-
-      process_list[pid_index].syscall_queue[next_syscall].syscall = SYS_FORK;
-
-      process_list[pid_index].syscall_queue[next_syscall].data.pid =
-          check_PID(words[2], lc);
+      syscall->syscall = SYS_FORK;
+      syscall->data.pid = check_PID(words[2], lc);
 
     } else if (nwords == 3 && strcmp(words[1], "wait") == 0) {
-      process_list[pid_index].syscall_queue[next_syscall].syscall = SYS_WAIT;
+      syscall->syscall = SYS_WAIT;
+      syscall->data.pid = check_PID(words[2], lc);
 
-      process_list[pid_index].syscall_queue[next_syscall].data.pid =
-          check_PID(words[2], lc);
     } else if (nwords == 3 && strcmp(words[1], "pipe") == 0) {
-      process_list[pid_index].syscall_queue[next_syscall].syscall = SYS_PIPE;
-
-      process_list[pid_index].syscall_queue[next_syscall].data.descriptor =
-          check_descriptor(words[2], lc);
+      syscall->syscall = SYS_PIPE;
+      syscall->data.descriptor = check_descriptor(words[2], lc);
 
     } else if (nwords == 4 && strcmp(words[1], "writepipe") == 0) {
-      process_list[pid_index].syscall_queue[next_syscall].syscall =
-          SYS_WRITEPIPE;
-
-      process_list[pid_index]
-          .syscall_queue[next_syscall]
-          .data.pipe_info.descriptor = check_descriptor(words[2], lc);
-
-      process_list[pid_index]
-          .syscall_queue[next_syscall]
-          .data.pipe_info.nbytes = check_bytes(words[3], lc);
+      syscall->syscall = SYS_WRITEPIPE;
+      syscall->data.pipe_info.descriptor = check_descriptor(words[2], lc);
+      syscall->data.pipe_info.nbytes = check_bytes(words[3], lc);
 
     } else if (nwords == 4 && strcmp(words[1], "readpipe") == 0) {
-
-      process_list[pid_index].syscall_queue[next_syscall].syscall =
-          SYS_READPIPE;
-
-      process_list[pid_index]
-          .syscall_queue[next_syscall]
-          .data.pipe_info.descriptor = check_descriptor(words[2], lc);
-
-      process_list[pid_index]
-          .syscall_queue[next_syscall]
-          .data.pipe_info.nbytes = check_bytes(words[3], lc);
+      syscall->syscall = SYS_READPIPE;
+      syscall->data.pipe_info.descriptor = check_descriptor(words[2], lc);
+      syscall->data.pipe_info.nbytes = check_bytes(words[3], lc);
     }
     // UNRECOGNISED LINE
     else {

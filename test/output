@@ -1,1 +1,5 @@
-timetaken 0
+[#] Initialising process list
+[#] Parsing eventfile...
+[#] Running simulation...
+[0usecs] [syscall 0] 	 process_0::exit();
+timetaken 5
