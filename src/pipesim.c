@@ -73,11 +73,11 @@ struct {
   } syscall_queue[MAX_SYSCALLS_PER_PROCESS];
 
   int parent_pid;
-  int waiting_for[]
+  int waiting_for;
 
 } process_list[MAX_PROCESSES];
 
-#define INVALID_PARENT -1
+#define INVALID_PID -1
 
 void clear_process(int pid) {
   process_list[pid].next_syscall = 0;
@@ -89,7 +89,8 @@ void clear_process(int pid) {
     process_list[pid].syscall_queue[call].syscall = SYS_UNASSIGNED;
   }
 
-  process_list[pid].parent_pid = INVALID_PARENT;
+  process_list[pid].waiting_for = INVALID_PID;
+  process_list[pid].parent_pid = INVALID_PID;
 }
 
 void initialise_process_list(void) {
@@ -222,15 +223,19 @@ void sim_exit(int pid, struct queue *rdy_queue) {
   // need to check if the parent of this process
   // is waiting
   int parent_pid = process_list[pid].parent_pid;
-  if (INVALID_PARENT != parent_pid) {
+  if (INVALID_PID != parent_pid) {
+
     if (ST_WAITING == process_list[parent_pid].state) {
       // need to check if parent is waiting for this particular child:
-      if (process_list[parent_pid])
-
+      printf("[#] parent of exited process: %i\n", parent_pid);
+      printf("[#] parent waiting for: %i\n",
+             process_list[parent_pid].waiting_for);
+      if (process_list[parent_pid].waiting_for == pid) {
+        process_list[parent_pid].waiting_for = INVALID_PID;
         state_transition(parent_pid, ST_READY, rdy_queue);
+      }
     }
   }
-
   clear_process(pid);
   state_transition(pid, ST_UNASSIGNED, rdy_queue);
 }
@@ -276,8 +281,13 @@ void sim_sleep(int pid, struct queue *rdy_queue) {
   state_transition(pid, ST_SLEEPING, rdy_queue);
 }
 
-void sim_wait(int pid, int child_pid, struct queue *rdy_queue) {
-  process_list[pid].
+void sim_wait(int pid, struct queue *rdy_queue) {
+  int syscall_index = process_list[pid].next_syscall;
+  process_list[pid].waiting_for =
+      process_list[pid].syscall_queue[syscall_index].data.pid - 1;
+
+  state_transition(pid, ST_WAITING, rdy_queue);
+  ++process_list[pid].next_syscall;
 }
 
 #define NO_RUNNING -1
@@ -327,6 +337,7 @@ void run_simulation(int time_quantum, int pipe_buff_size) {
       case SYS_WAIT: {
         printf("wait();\n");
         sim_wait(running, &rdy_queue);
+        break;
       }
       case SYS_UNASSIGNED: {
         fprintf(stderr, "[!] UNASSIGNED SYSTEM CALL process_%i (halting...)\n",
@@ -365,6 +376,7 @@ void run_simulation(int time_quantum, int pipe_buff_size) {
         }
       }
     }
+
   } while (count); // until simulation is complete
 }
 
