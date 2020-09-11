@@ -59,18 +59,31 @@ enum process_state_type {
   ST_RUNNING,
   ST_SLEEPING,
   ST_WAITING,
+  ST_WRITING,
+  ST_READING,
   ST_UNASSIGNED
 };
 
+#define INVALID_DESC -1
+enum pipe_end { PIPE_READ, PIPE_WRITE, PIPE_NONE };
+
 int timetaken = 0;
+
 struct {
   enum process_state_type state;
   int next_syscall;
 
+  // syscall structure holds information from parsing the file
   struct syscall {
     enum syscall_type syscall;
     union syscall_data data;
   } syscall_queue[MAX_SYSCALLS_PER_PROCESS];
+
+  struct pipe {
+    enum pipe_end my_end;
+    enum pipe_end other_end;
+    int contained_bytes;
+  } pipe_details[MAX_PIPE_DESCRIPTORS_PER_PROCESS];
 
   int parent_pid;
   int waiting_for;
@@ -87,6 +100,11 @@ void clear_process(int pid) {
   // Initialise all syscalls to default value
   for (int call = 0; call < MAX_SYSCALLS_PER_PROCESS; call++) {
     process_list[pid].syscall_queue[call].syscall = SYS_UNASSIGNED;
+  }
+
+  for (int desc = 0; desc < MAX_PIPE_DESCRIPTORS_PER_PROCESS; desc++) {
+    process_list[pid].pipe_details[desc].other_end = PIPE_NONE;
+    process_list[pid].pipe_details[desc].my_end = PIPE_NONE;
   }
 
   process_list[pid].waiting_for = INVALID_PID;
@@ -191,6 +209,14 @@ void state_transition(int pid, enum process_state_type new_state,
     snprintf(state, sizeof(state), "REMOVED");
     break;
   }
+  case ST_WRITING: {
+    snprintf(state, sizeof(state), "WRITING");
+    break;
+  }
+  case ST_READING: {
+    snprintf(state, sizeof(state), "READING");
+    break;
+  }
   default: {
     snprintf(state, sizeof(state), "!UNKNOWN!");
     break;
@@ -269,6 +295,18 @@ void sim_fork(int parent_pid, struct queue *rdy_queue) {
   // state of the parent, but since there's no
   // state for these processes.
 
+  // Connect to all pipes on the parent with no reading end
+  for (int pipe = 0; pipe < MAX_PIPE_DESCRIPTORS_PER_PROCESS; pipe++) {
+    enum pipe_end end = process_list[parent_pid].pipe_details[pipe].other_end;
+    enum pipe_end start = process_list[parent_pid].pipe_details[pipe].my_end;
+
+    if (PIPE_NONE == end && PIPE_NONE != start) {
+      process_list[parent_pid].pipe_details[pipe].other_end = PIPE_READ;
+      process_list[child_pid].pipe_details[pipe].my_end = PIPE_READ;
+      process_list[child_pid].pipe_details[pipe].other_end = PIPE_WRITE;
+    }
+  }
+
   process_list[child_pid].parent_pid = parent_pid;
 
   ++process_list[parent_pid].next_syscall;
@@ -290,6 +328,101 @@ void sim_wait(int pid, struct queue *rdy_queue) {
   ++process_list[pid].next_syscall;
 }
 
+void sim_pipe(int pid, struct queue *rdy_queue,
+              int pipes[MAX_PROCESSES][MAX_PIPE_DESCRIPTORS_PER_PROCESS]) {
+  int syscall_index = process_list[pid].next_syscall;
+  // mimicing the call to pipe();
+  int desc = process_list[pid].syscall_queue[syscall_index].data.descriptor;
+
+  pipes[pid][desc] = 0;
+
+  printf("JUST MADE A PIPE FOR %i WITH DESC: %i\n", pid, desc);
+
+  state_transition(pid, ST_READY, rdy_queue);
+  ++process_list[pid].next_syscall;
+}
+
+void sim_write_pipe(
+    int pid, int pipe_size, struct queue *rdy_queue,
+    int pipes[MAX_PROCESSES][MAX_PIPE_DESCRIPTORS_PER_PROCESS]) {
+  state_transition(pid, ST_WRITING, rdy_queue);
+
+  int next_call = process_list[pid].next_syscall;
+  int destination_desc =
+      process_list[pid].syscall_queue[next_call].data.pipe_info.descriptor;
+  int to_write =
+      process_list[pid].syscall_queue[next_call].data.pipe_info.nbytes;
+
+  int total_remaining = pipe_size - pipes[pid][destination_desc];
+
+  printf("PIPE {%i} HAS %i BYTES and PID %i WANTS TO WRITE %i\n",
+         destination_desc, pipes[pid][destination_desc], pid, to_write);
+
+  if (to_write > total_remaining) {
+    to_write -= total_remaining;
+    elapse_time(total_remaining, rdy_queue);
+    pipes[pid][destination_desc] = pipe_size;
+    process_list[pid].syscall_queue[next_call].data.pipe_info.nbytes = to_write;
+  } else {
+    pipes[pid][destination_desc] += to_write;
+    elapse_time(to_write, rdy_queue);
+    process_list[pid].syscall_queue[next_call].data.pipe_info.nbytes = 0;
+    state_transition(pid, ST_READY, rdy_queue);
+    ++process_list[pid].next_syscall;
+  }
+
+  printf("NOW: PIPE {%i} HAS %i BYTES after PID %i wrote %i\n",
+         destination_desc, pipes[pid][destination_desc], pid, to_write);
+
+  // Wake up read ends of pipes
+  if (pipes[pid][destination_desc] > 0) {
+    for (int child_id = 0; child_id < MAX_PROCESSES; child_id++) {
+      if (pid == process_list[child_id].parent_pid) {
+        if (ST_READING == process_list[child_id].state) {
+          state_transition(child_id, ST_READY, rdy_queue);
+        }
+      }
+    }
+  }
+}
+
+void sim_read_pipe(int pid, int pipe_size, struct queue *rdy_queue,
+                   int pipes[MAX_PROCESSES][MAX_PIPE_DESCRIPTORS_PER_PROCESS]) {
+  state_transition(pid, ST_READING, rdy_queue);
+
+  int next_call = process_list[pid].next_syscall;
+  int destination_desc =
+      process_list[pid].syscall_queue[next_call].data.pipe_info.descriptor;
+  int to_read =
+      process_list[pid].syscall_queue[next_call].data.pipe_info.nbytes;
+
+  int parent = process_list[pid].parent_pid;
+
+  printf("PIPE {%i} HAS %i BYTES and PID %i WANTS TO READ %i\n",
+         destination_desc, pipes[parent][destination_desc], pid, to_read);
+
+  int read_total;
+  if (pipes[parent][destination_desc] - to_read < 0) {
+    read_total = pipes[parent][destination_desc];
+  } else {
+    read_total = to_read;
+    ++process_list[pid].next_syscall;
+    state_transition(pid, ST_READY, rdy_queue);
+  }
+  elapse_time(read_total, rdy_queue);
+  pipes[parent][destination_desc] -= read_total;
+
+  printf("NOW: PIPE {%i} HAS %i BYTES after PID %i READ %i\n", destination_desc,
+         pipes[parent][destination_desc], pid, to_read);
+
+  // wake up writing end of pipe
+  if (read_total > 0) {
+    if (ST_WRITING == process_list[parent].state) {
+      state_transition(parent, ST_READY, rdy_queue);
+    }
+  }
+}
+
 #define NO_RUNNING -1
 
 // Uses the values in the command_queue to find and set
@@ -301,8 +434,14 @@ void run_simulation(int time_quantum, int pipe_buff_size) {
   struct queue rdy_queue;
   queue_init(&rdy_queue);
 
+  int pipes[MAX_PROCESSES][MAX_PIPE_DESCRIPTORS_PER_PROCESS];
+
   process_list[running].state = ST_RUNNING;
   do {
+    struct pipe pipe = process_list[0].pipe_details[1];
+    printf("Parent pipe details: %i %i %i\n", pipe.contained_bytes, pipe.my_end,
+           pipe.other_end);
+
     if (NO_RUNNING != running) {
       // Get the system call of the currently executing process
       int syscall_index = process_list[running].next_syscall;
@@ -337,6 +476,21 @@ void run_simulation(int time_quantum, int pipe_buff_size) {
       case SYS_WAIT: {
         printf("wait();\n");
         sim_wait(running, &rdy_queue);
+        break;
+      }
+      case SYS_PIPE: {
+        printf("pipe();\n");
+        sim_pipe(running, &rdy_queue, pipes);
+        break;
+      }
+      case SYS_WRITEPIPE: {
+        printf("writepipe();\n");
+        sim_write_pipe(running, pipe_buff_size, &rdy_queue, pipes);
+        break;
+      }
+      case SYS_READPIPE: {
+        printf("readpipe();\n");
+        sim_read_pipe(running, pipe_buff_size, &rdy_queue, pipes);
         break;
       }
       case SYS_UNASSIGNED: {
@@ -376,6 +530,11 @@ void run_simulation(int time_quantum, int pipe_buff_size) {
         }
       }
     }
+    printf("Parent pipe details: %i %i %i\n", pipe.contained_bytes, pipe.my_end,
+           pipe.other_end);
+
+    if (timetaken > 300)
+      exit(1);
 
   } while (count); // until simulation is complete
 }
@@ -503,6 +662,7 @@ void parse_eventfile(char program[], char eventfile[]) {
       syscall->syscall = SYS_READPIPE;
       syscall->data.pipe_info.descriptor = check_descriptor(words[2], lc);
       syscall->data.pipe_info.nbytes = check_bytes(words[3], lc);
+
     }
     // UNRECOGNISED LINE
     else {
