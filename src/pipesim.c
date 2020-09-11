@@ -350,10 +350,9 @@ void sim_pipe(int pid, struct queue *rdy_queue) {
 }
 
 void set_pipe(int pid, int pipedesc, int new_qty) {
-  struct pipe pipe = process_list[pid].pipe_details[pipedesc];
+  int other = process_list[pid].pipe_details[pipedesc].other_pid;
   process_list[pid].pipe_details[pipedesc].contained_bytes = new_qty;
-  int other = pipe.other_pid;
-  process_list[pid].pipe_details[other].contained_bytes = new_qty;
+  process_list[other].pipe_details[pipedesc].contained_bytes = new_qty;
 }
 
 void sim_write_pipe(int pid, int pipe_size, struct queue *rdy_queue) {
@@ -412,7 +411,6 @@ void sim_read_pipe(int pid, int pipe_size, struct queue *rdy_queue) {
   int parent = process_list[pid].parent_pid;
 
   struct pipe pipe = process_list[parent].pipe_details[destination_desc];
-
   printf("PIPE {%i} HAS %i BYTES and PID %i WANTS TO READ %i\n",
          destination_desc, pipe.contained_bytes, pid, to_read);
 
@@ -429,8 +427,11 @@ void sim_read_pipe(int pid, int pipe_size, struct queue *rdy_queue) {
   elapse_time(read_total, rdy_queue);
   set_pipe(pid, destination_desc, pipe.contained_bytes - read_total);
 
+  process_list[pid].syscall_queue[next_call].data.pipe_info.nbytes -=
+      read_total;
   printf("NOW: PIPE {%i} HAS %i BYTES after PID %i READ %i\n", destination_desc,
-         pipe.contained_bytes, pid, to_read);
+         process_list[parent].pipe_details[destination_desc].contained_bytes,
+         pid, to_read);
 
   // wake up writing end of pipe
   if (read_total > 0) {
@@ -542,10 +543,6 @@ void run_simulation(int time_quantum, int pipe_buff_size) {
         }
       }
     }
-
-    if (timetaken > 400)
-      exit(1);
-
   } while (count); // until simulation is complete
 }
 
