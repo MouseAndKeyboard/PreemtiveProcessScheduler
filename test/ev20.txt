@@ -1,0 +1,101 @@
+1 pipe 1
+1 sleep 1000
+1 fork 2
+2 compute 2000
+2 readpipe 1 5000
+1 writepipe 1 5000
+1 wait 2
+2 exit
+1 fork 3
+3 pipe 2
+3 fork 4
+4 pipe 1 
+4 fork 5
+5 pipe 2
+5 fork 6
+6 pipe 1
+6 fork 7
+7 pipe 2
+7 fork 8
+8 pipe 1
+8 fork 9
+9 pipe 2
+9 fork 10
+10 pipe 1
+10 fork 11
+11 pipe 2
+11 fork 12
+12 pipe 1
+12 fork 13
+13 pipe 2
+13 fork 14
+14 pipe 1
+14 fork 15
+15 pipe 2
+15 fork 16
+16 pipe 1
+16 fork 17
+17 pipe 2
+17 fork 18
+18 pipe 1
+18 fork 19
+19 pipe 2
+19 fork 20
+20 pipe 1
+1 writepipe 1 5000
+3 writepipe 2 5000
+4 writepipe 1 5000
+5 writepipe 2 5000
+6 writepipe 1 5000
+7 writepipe 2 5000
+8 writepipe 1 5000
+9 writepipe 2 5000
+10 writepipe 1 5000
+11 writepipe 2 5000
+12 writepipe 1 5000
+13 writepipe 2 5000
+14 writepipe 1 5000
+15 writepipe 2 5000
+16 writepipe 1 5000
+17 writepipe 2 5000
+18 writepipe 1 5000
+19 writepipe 2 5000
+1 compute 1001
+3 readpipe 1 5000
+4 readpipe 2 5000
+5 readpipe 1 5000
+6 readpipe 2 5000
+7 readpipe 1 5000
+8 readpipe 2 5000
+9 readpipe 1 5000
+10 readpipe 2 5000
+11 readpipe 1 5000
+12 readpipe 2 5000
+13 readpipe 1 5000
+14 readpipe 2 5000
+15 readpipe 1 5000
+16 readpipe 2 5000
+17 readpipe 1 5000
+18 readpipe 2 5000
+19 readpipe 1 5000
+20 readpipe 2 5000
+1 exit
+3 exit
+4 exit
+5 exit
+6 exit
+7 exit
+8 exit
+9 exit
+10 exit
+11 exit
+12 exit
+13 exit
+14 exit
+15 exit
+16 exit
+17 exit
+18 exit
+19 exit
+20 exit
+# timetaken = 195691 TQ=1000 PS=4096

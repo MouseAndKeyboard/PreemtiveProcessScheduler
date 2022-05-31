@@ -69,7 +69,7 @@ enum pipe_end { PIPE_READ, PIPE_WRITE, PIPE_NONE };
 
 int timetaken = 0;
 
-struct {
+struct process {
   enum process_state_type state;
   int next_syscall;
 
@@ -83,41 +83,59 @@ struct {
     enum pipe_end my_end;
     int other_pid;
     int contained_bytes;
-  } pipe_details[MAX_PIPE_DESCRIPTORS_PER_PROCESS];
+    // +1 so I never run into off by 1 errors
+  } pipe_details[MAX_PIPE_DESCRIPTORS_PER_PROCESS + 1];
 
   int parent_pid;
   int waiting_for;
 
-} process_list[MAX_PROCESSES];
+  // +1 so I never run into off by 1 errors
+} process_list[MAX_PROCESSES + 1];
 
 #define INVALID_PID -1
 
+/*
+ *  clear_process
+ *  Resets a particular pid to factory settings
+ *
+ *  Note: pipes aren't fully cleared to allow for
+ *  post-process-death reading from pipe buffers.
+ *
+ *  pid: process id (starting from 0) of the process
+ *  you want to clear.
+ *  */
 void clear_process(int pid) {
-  process_list[pid].next_syscall = 0;
-
-  process_list[pid].state = ST_UNASSIGNED;
+  struct process this_proc = process_list[pid];
+  this_proc.next_syscall = 0;
+  this_proc.state = ST_UNASSIGNED;
 
   // Initialise all syscalls to default value
   for (int call = 0; call < MAX_SYSCALLS_PER_PROCESS; call++) {
-    process_list[pid].syscall_queue[call].syscall = SYS_UNASSIGNED;
+    this_proc.syscall_queue[call].syscall = SYS_UNASSIGNED;
   }
 
   for (int desc = 0; desc < MAX_PIPE_DESCRIPTORS_PER_PROCESS; desc++) {
-    process_list[pid].pipe_details[desc].my_end = PIPE_NONE;
+    this_proc.pipe_details[desc].my_end = PIPE_NONE;
   }
 
-  process_list[pid].waiting_for = INVALID_PID;
-  process_list[pid].parent_pid = INVALID_PID;
+  this_proc.waiting_for = INVALID_PID;
+  this_proc.parent_pid = INVALID_PID;
 }
 
+/*
+ * initialise_process_list
+ * Totally resets the process list to begin simulation
+ */
 void initialise_process_list(void) {
   for (int pid = 0; pid < MAX_PROCESSES; pid++) {
     clear_process(pid);
-    for (int pipe = 0; pipe < MAX_PIPE_DESCRIPTORS_PER_PROCESS; pipe++) {
-
-      process_list[pid].pipe_details[pipe].contained_bytes = 0;
-      process_list[pid].pipe_details[pipe].my_end = PIPE_NONE;
-      process_list[pid].pipe_details[pipe].other_pid = INVALID_PID;
+    struct process proc = process_list[pid];
+    for (int pipe_id = 0; pipe_id < MAX_PIPE_DESCRIPTORS_PER_PROCESS;
+         pipe_id++) {
+      struct pipe pipe = proc.pipe_details[pipe_id];
+      pipe.contained_bytes = 0;
+      pipe.my_end = PIPE_NONE;
+      pipe.other_pid = INVALID_PID;
     }
   }
 }
@@ -128,7 +146,11 @@ struct queue {
   int elements[MAX_PROCESSES];
 };
 
-// Helper functions for the queue
+/* queue_init
+ * sets/resets a queue structure
+ *
+ * q: the queue you want to reset
+ */
 void queue_init(struct queue *q) {
   for (int i = 0; i < MAX_PROCESSES; i++) {
     q->elements[i] = 0;
@@ -136,7 +158,13 @@ void queue_init(struct queue *q) {
   q->head = 0;
   q->tail = 0;
 }
+
+/* queue_empty
+ * predicate for checking if a queue has elements
+ * */
 bool queue_empty(struct queue *q) { return q->head == q->tail; }
+/* enqueue/dequeue
+ * add/remove elements from the cyclic queue*/
 int dequeue(struct queue *q) { return q->elements[(q->head)++]; }
 void enqueue(struct queue *q, int value) { q->elements[(q->tail)++] = value; }
 
@@ -159,19 +187,19 @@ bool elapse_time(int time_delta, struct queue *rdy_queue) {
   timetaken += time_delta;
   printf("[#] T: %i\n", timetaken);
   bool state_change = false;
-  for (int proc = 0; proc < MAX_PROCESSES; proc++) {
-    if (ST_SLEEPING == process_list[proc].state) {
-      int current_call = process_list[proc].next_syscall;
-      int remaining_usecs =
-          process_list[proc].syscall_queue[current_call].data.microseconds;
+  for (int proc_id = 0; proc_id < MAX_PROCESSES; proc_id++) {
+    struct process proc = process_list[proc_id];
+    if (ST_SLEEPING == proc.state) {
+      int current_call = proc.next_syscall;
+      struct syscall call = proc.syscall_queue[current_call];
+      int remaining_usecs = call.data.microseconds;
       remaining_usecs -= time_delta;
-      process_list[proc].syscall_queue[current_call].data.microseconds =
-          remaining_usecs;
+      call.data.microseconds = remaining_usecs;
 
       // Sleeping time finished
       if (remaining_usecs <= 0) {
-        ++process_list[proc].next_syscall;
-        state_transition(proc, ST_READY, rdy_queue);
+        ++proc.next_syscall;
+        state_transition(proc_id, ST_READY, rdy_queue);
         state_change = true;
       }
     }
@@ -254,27 +282,38 @@ void sim_exit(int pid, struct queue *rdy_queue) {
   // need to check if the parent of this process
   // is waiting
   int parent_pid = process_list[pid].parent_pid;
+  struct process parent = process_list[parent_pid];
   if (INVALID_PID != parent_pid) {
 
-    if (ST_WAITING == process_list[parent_pid].state) {
+    if (ST_WAITING == parent.state) {
       // need to check if parent is waiting for this particular child:
       printf("[#] parent of exited process: %i\n", parent_pid);
-      printf("[#] parent waiting for: %i\n",
-             process_list[parent_pid].waiting_for);
-      if (process_list[parent_pid].waiting_for == pid) {
-        process_list[parent_pid].waiting_for = INVALID_PID;
+      printf("[#] parent waiting for: %i\n", parent.waiting_for);
+      if (parent.waiting_for == pid) {
+        parent.waiting_for = INVALID_PID;
         state_transition(parent_pid, ST_READY, rdy_queue);
       }
     }
   }
+
   clear_process(pid);
   state_transition(pid, ST_UNASSIGNED, rdy_queue);
 }
 
+/* sim_compute
+ * Encapsulates the "compute" system call
+ *
+ * pid: Process ID we're running the operation on
+ * time_quantum: Max amount of computation before
+ *   CPU takes over
+ * rdy_queue: Ready queue to allow for state transition
+ */
 void sim_compute(int pid, int time_quantum, struct queue *rdy_queue) {
   int syscall_index = process_list[pid].next_syscall;
 
-  int usecs = process_list[pid].syscall_queue[syscall_index].data.microseconds;
+  struct process proc = process_list[pid];
+
+  int usecs = proc.syscall_queue[syscall_index].data.microseconds;
 
   if (usecs > time_quantum) {
     elapse_time(time_quantum, rdy_queue);
@@ -283,13 +322,19 @@ void sim_compute(int pid, int time_quantum, struct queue *rdy_queue) {
     elapse_time(usecs, rdy_queue);
     // We have finished computing
     usecs = 0;
-    ++process_list[pid].next_syscall;
+    ++proc.next_syscall;
   }
 
-  process_list[pid].syscall_queue[syscall_index].data.microseconds = usecs;
+  proc.syscall_queue[syscall_index].data.microseconds = usecs;
   state_transition(pid, ST_READY, rdy_queue);
 }
 
+/* sim_fork
+ * Spawns a new child process
+ *
+ * parent_pid: Process ID we're running the operation on
+ * rdy_queue: Ready queue to allow for state transition
+ */
 void sim_fork(int parent_pid, struct queue *rdy_queue) {
   int syscall_index = process_list[parent_pid].next_syscall;
   // subtract 1 to get the process index from 0 (rather than from 1)
@@ -320,10 +365,22 @@ void sim_fork(int parent_pid, struct queue *rdy_queue) {
   state_transition(parent_pid, ST_READY, rdy_queue);
 }
 
+/* sim_sleep
+ * Pulls a process of the CPU for a given time
+ *
+ * pid: Process ID we're running the operation on
+ * rdy_queue: Ready queue to allow for state transition
+ */
 void sim_sleep(int pid, struct queue *rdy_queue) {
   state_transition(pid, ST_SLEEPING, rdy_queue);
 }
 
+/* sim_wait
+ * Pulls a process off the CPU until child dies
+ *
+ * pid: Process ID we're running the operation on
+ * rdy_queue: Ready queue to allow for state transition
+ */
 void sim_wait(int pid, struct queue *rdy_queue) {
   int syscall_index = process_list[pid].next_syscall;
   process_list[pid].waiting_for =
@@ -333,6 +390,12 @@ void sim_wait(int pid, struct queue *rdy_queue) {
   ++process_list[pid].next_syscall;
 }
 
+/* sim_pipe
+ * Creates a pipe with the current process as writing end
+ *
+ * pid: Process ID we're running the operation on
+ * rdy_queue: Ready queue to allow for state transition
+ */
 void sim_pipe(int pid, struct queue *rdy_queue) {
 
   int syscall_index = process_list[pid].next_syscall;
@@ -349,12 +412,29 @@ void sim_pipe(int pid, struct queue *rdy_queue) {
   ++process_list[pid].next_syscall;
 }
 
+/* set_pipe
+ * Sets the value in a pipe buffer
+ * This is to ensure consistency accross processes
+ *
+ * pid: Process ID which has 1 end of the pipe
+ * pipedesc: Pipe descriptor for the pipe
+ * new_qty: Value we are overriding with
+ */
 void set_pipe(int pid, int pipedesc, int new_qty) {
   int other = process_list[pid].pipe_details[pipedesc].other_pid;
-  process_list[pid].pipe_details[pipedesc].contained_bytes = new_qty;
+  printf("set_pipe - %i\n", other);
+  if (other)
+    process_list[pid].pipe_details[pipedesc].contained_bytes = new_qty;
   process_list[other].pipe_details[pipedesc].contained_bytes = new_qty;
 }
 
+/* sim_write_pipe
+ * Adds/writes an amount of data from a pipe
+ *
+ * pid: Process ID we're running the operation on
+ * pipe_size: Maximum space available in a pipe buffer
+ * rdy_queue: Ready queue to allow for state transition
+ */
 void sim_write_pipe(int pid, int pipe_size, struct queue *rdy_queue) {
 
   int next_call = process_list[pid].next_syscall;
@@ -400,6 +480,13 @@ void sim_write_pipe(int pid, int pipe_size, struct queue *rdy_queue) {
   }
 }
 
+/* sim_read_pipe
+ * Removes/reads an amount of data from a pipe
+ *
+ * pid: Process ID we're running the operation on
+ * pipe_size: Maximum space available in a pipe buffer
+ * rdy_queue: Ready queue to allow for state transition
+ */
 void sim_read_pipe(int pid, int pipe_size, struct queue *rdy_queue) {
 
   int next_call = process_list[pid].next_syscall;
@@ -444,8 +531,16 @@ void sim_read_pipe(int pid, int pipe_size, struct queue *rdy_queue) {
 
 #define NO_RUNNING -1
 
-// Uses the values in the command_queue to find and set
-// the timetaken global variable.
+/* run_simulation
+ * Runs a simulation for some given processes and system calls
+ *
+ * time_quantum: Max time a process can hold the CPU for
+ * computing
+ * pipe_buff_size: Max amount of space in a pipe buffer
+ *
+ * Sets timetaken to amount of microseconds elapsed in the
+ * simulation
+ */
 void run_simulation(int time_quantum, int pipe_buff_size) {
 
   int running = 0; // PID=1 ( index starts at 0 ) always first process

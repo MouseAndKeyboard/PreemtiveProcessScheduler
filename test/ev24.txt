@@ -1,0 +1,36 @@
+1 pipe 1
+1 pipe 2
+1 pipe 3
+1 pipe 4
+1 pipe 5
+1 fork 2
+2 readpipe 5 5000
+1 writepipe 5 5000
+1 wait 2
+2 exit
+1 fork 3
+3 sleep 1000
+1 writepipe 1 5000
+1 writepipe 2 5000
+1 writepipe 3 5000
+1 writepipe 4 5000
+1 writepipe 5 5000
+3 readpipe 1 5000
+3 readpipe 2 5000
+3 readpipe 3 5000
+3 readpipe 4 5000
+3 readpipe 5 5000
+1 wait 3
+3 exit
+1 pipe 6
+1 fork 4
+4 readpipe 4 500
+1 writepipe 4 500
+4 sleep 100
+1 writepipe 6 500
+4 readpipe 6 500
+1 exit
+4 exit
+#tt=62670
+# tq=1000, ps=4096
+
